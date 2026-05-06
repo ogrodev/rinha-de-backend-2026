@@ -49,6 +49,10 @@ type FfiSymbols = {
   // path, spawns its own thread, and returns. Bun's main thread is then idle;
   // the C thread handles all incoming HTTP requests directly.
   start_http_server: (sock_path: number) => number;
+  // Same as start_http_server but runs the event loop in the CALLING thread
+  // (blocks forever). Useful for parking Bun's main thread inside the C
+  // event loop so JS GC/timers don't compete for CPU.
+  run_http_server: (sock_path: number) => number;
   // Toggle the "ready" flag inside the C library (used by /ready and to gate
   // /fraud-score). Set to 1 after JIT warmup completes.
   set_ready: (ready: number) => void;
@@ -87,7 +91,11 @@ function tryLoadNativeLib(): FfiSymbols | null {
           returns: FFIType.i32,
         },
         start_http_server: {
-          args: [FFIType.cstring],
+          args: [FFIType.ptr],
+          returns: FFIType.i32,
+        },
+        run_http_server: {
+          args: [FFIType.ptr],
           returns: FFIType.i32,
         },
         set_ready: {
@@ -246,6 +254,15 @@ export function startHttpServer(sockPath: string): boolean {
   const bytes = new TextEncoder().encode(sockPath + "\0");
   const r = FFI.start_http_server(ptr(bytes));
   return r === 0;
+}
+
+// Same but blocks the caller's thread inside the C event loop forever.
+export function runHttpServer(sockPath: string): never {
+  if (!FFI) throw new Error("FFI not loaded");
+  const bytes = new TextEncoder().encode(sockPath + "\0");
+  FFI.run_http_server(ptr(bytes));
+  // Unreachable.
+  throw new Error("run_http_server returned");
 }
 
 export function setReady(ready: boolean): void {

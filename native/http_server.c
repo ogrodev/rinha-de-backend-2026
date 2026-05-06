@@ -296,7 +296,7 @@ static void *server_thread(void *arg) {
 
 // --- Public entry -----------------------------------------------------------
 
-int32_t start_http_server(const char *sock_path) {
+static int setup_listener(const char *sock_path) {
     memset(&G_SRV, 0, sizeof(G_SRV));
 
     unlink(sock_path);
@@ -329,14 +329,24 @@ int32_t start_http_server(const char *sock_path) {
         close(fd);
         return -1;
     }
+    fprintf(stderr, "[http_server] listening on %s\n", sock_path);
+    return 0;
+}
 
+// Spawn the event loop on a new thread; return immediately.
+int32_t start_http_server(const char *sock_path) {
+    if (setup_listener(sock_path) != 0) return -1;
     if (pthread_create(&G_SRV.thread, NULL, server_thread, NULL) != 0) {
         fprintf(stderr, "[http_server] pthread_create failed\n");
-        close(G_SRV.epoll_fd);
-        close(fd);
         return -1;
     }
-
-    fprintf(stderr, "[http_server] listening on %s\n", sock_path);
+    return 0;
+}
+// Run the event loop in the calling thread (blocks forever). Used when the
+// caller wants its own thread to BE the event loop, so the JS runtime's
+// GC/timer threads aren't competing for CPU with the I/O loop.
+int32_t run_http_server(const char *sock_path) {
+    if (setup_listener(sock_path) != 0) return -1;
+    server_thread(NULL);
     return 0;
 }

@@ -57,7 +57,7 @@ export default function () {
     const expectedApproved = entry.expected_approved;
 
     const res = http.post(
-        'http://localhost:9999/fraud-score',
+        'http://lb:9999/fraud-score',
         JSON.stringify(entry.request),
         { headers: { 'Content-Type': 'application/json' }, timeout: '2001ms' }
     );

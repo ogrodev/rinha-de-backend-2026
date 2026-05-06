@@ -22,6 +22,7 @@ import {
   bindIndex,
   searchFraudCount,
   startHttpServer,
+  runHttpServer,
   setReady,
   isFfiLoaded,
 } from "./index/search.ts";
@@ -74,21 +75,17 @@ async function main(): Promise<void> {
   }
 
   if (isFfiLoaded() && SOCK) {
-    // Native path: hand the socket to C and idle.
     if (fs.existsSync(SOCK)) {
       try { fs.unlinkSync(SOCK); } catch {}
-    }
-    if (!startHttpServer(SOCK)) {
-      console.error("[server] startHttpServer failed");
-      process.exit(1);
     }
     setReady(true);
     state.ready = true;
     console.error(
-      `[server] native http server up: n=${idx.n} k=${idx.k} d=${idx.d} nprobe=${idx.nprobe}`,
+      `[server] entering native http loop (n=${idx.n} k=${idx.k} d=${idx.d} nprobe=${idx.nprobe})`,
     );
-    // Hold the event loop open. The C thread does all the work.
-    setInterval(() => {}, 1 << 30);
+    // Block the main thread inside the C event loop. JS effectively stops
+    // running; no JSC GC threads can preempt the I/O loop. Returns never.
+    runHttpServer(SOCK);
     return;
   }
 
