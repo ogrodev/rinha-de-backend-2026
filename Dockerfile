@@ -65,8 +65,8 @@ COPY src ./src
 # Native FFI library (built in the builder stage).
 COPY --from=builder /app/native/libsearch.so ./libsearch.so
 COPY --from=builder /app/data ./data
-COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json /app/bunfig.toml ./
+COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 8080
 

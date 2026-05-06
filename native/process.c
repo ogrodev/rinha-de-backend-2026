@@ -560,3 +560,184 @@ int32_t process_request(const char *body, int32_t body_len, float *out) {
 
     return search_query(out);
 }
+
+// --- Full HTTP/1.1 handler (single FFI call replaces Bun.serve) ----------
+//
+// handle_http parses an HTTP/1.1 request from `req[0..req_len]`, dispatches
+// based on method+path, and writes a complete HTTP/1.1 response into
+// `resp[0..resp_cap]`. Returns the number of bytes written, or 0 if the
+// request is incomplete (caller should accumulate more bytes), or -1 on
+// fatal protocol error (caller should close connection).
+//
+// Supported endpoints (no other routes):
+//   GET  /ready        -> 200 {} or 503 {"error":"not_ready"} based on `is_ready`
+//   POST /fraud-score  -> 200 {"approved":...,"fraud_score":...}
+//                      or 400 on parse failure
+//                      or 503 if not ready
+//
+// HTTP/1.1 keep-alive is on by default; we always return Connection: keep-alive
+// (and Content-Length, no chunked encoding).
+
+static int32_t IS_READY = 0;
+
+void set_ready(int32_t r) { IS_READY = r; }
+
+// Pre-built static response bodies + their HTTP wrappers.
+// We keep response bytes in static memory so handle_http only memcpy's
+// (no per-request allocation).
+
+static const char RESP_READY[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: 2\r\n"
+    "Connection: keep-alive\r\n"
+    "\r\n"
+    "{}";
+static const int32_t RESP_READY_LEN = sizeof(RESP_READY) - 1;
+
+static const char RESP_NOT_READY[] =
+    "HTTP/1.1 503 Service Unavailable\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: 21\r\n"
+    "Connection: keep-alive\r\n"
+    "\r\n"
+    "{\"error\":\"not_ready\"}";
+static const int32_t RESP_NOT_READY_LEN = sizeof(RESP_NOT_READY) - 1;
+
+static const char RESP_INVALID[] =
+    "HTTP/1.1 400 Bad Request\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: 27\r\n"
+    "Connection: keep-alive\r\n"
+    "\r\n"
+    "{\"error\":\"invalid_payload\"}";
+static const int32_t RESP_INVALID_LEN = sizeof(RESP_INVALID) - 1;
+
+static const char RESP_NOT_FOUND[] =
+    "HTTP/1.1 404 Not Found\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: 21\r\n"
+    "Connection: keep-alive\r\n"
+    "\r\n"
+    "{\"error\":\"not_found\"}";
+static const int32_t RESP_NOT_FOUND_LEN = sizeof(RESP_NOT_FOUND) - 1;
+
+// Score response prefixes (status + headers up to the body). Body content
+// length is fixed per fraud count, so we precompute the full HTTP response.
+typedef struct { const char *bytes; int32_t len; } http_resp_t;
+
+#define MAKE_SCORE(approved, score, body_len) \
+    "HTTP/1.1 200 OK\r\n" \
+    "Content-Type: application/json\r\n" \
+    "Content-Length: " #body_len "\r\n" \
+    "Connection: keep-alive\r\n" \
+    "\r\n" \
+    "{\"approved\":" approved ",\"fraud_score\":" score "}"
+
+static const char S0[]  = MAKE_SCORE("true",  "0",   33);    // {"approved":true,"fraud_score":0}
+static const char S1[]  = MAKE_SCORE("true",  "0.2", 35);
+static const char S2[]  = MAKE_SCORE("true",  "0.4", 35);
+static const char S3[]  = MAKE_SCORE("false", "0.6", 36);
+static const char S4[]  = MAKE_SCORE("false", "0.8", 36);
+static const char S5[]  = MAKE_SCORE("false", "1",   34);
+
+static const http_resp_t SCORE_RESPONSES[6] = {
+    { S0, sizeof(S0) - 1 },
+    { S1, sizeof(S1) - 1 },
+    { S2, sizeof(S2) - 1 },
+    { S3, sizeof(S3) - 1 },
+    { S4, sizeof(S4) - 1 },
+    { S5, sizeof(S5) - 1 },
+};
+
+// Find "\r\n\r\n" that ends the HTTP headers. Returns offset of body start
+// (i.e. byte after the empty line), or -1 if not found.
+static int find_body_start(const char *req, int32_t req_len) {
+    for (int i = 0; i + 3 < req_len; i++) {
+        if (req[i] == '\r' && req[i+1] == '\n' && req[i+2] == '\r' && req[i+3] == '\n') {
+            return i + 4;
+        }
+    }
+    return -1;
+}
+
+// Find the Content-Length value. Case-insensitive search since RFC 7230 says
+// header field names are case-insensitive. Returns -1 if not found.
+static int find_content_length(const char *headers, int32_t headers_len) {
+    static const char K1[] = "\r\nContent-Length:";
+    static const char K2[] = "\r\ncontent-length:";
+    for (int i = 0; i + (int)sizeof(K1) - 1 < headers_len; i++) {
+        const char *p = headers + i;
+        if ((p[0] == '\r' && p[1] == '\n') &&
+            (memcmp(p + 2, "Content-Length:", 15) == 0 ||
+             memcmp(p + 2, "content-length:", 15) == 0)) {
+            int j = i + 17;
+            while (j < headers_len && headers[j] == ' ') j++;
+            int v = 0;
+            while (j < headers_len && headers[j] >= '0' && headers[j] <= '9') {
+                v = v * 10 + (headers[j] - '0');
+                j++;
+            }
+            return v;
+        }
+    }
+    (void)K2;
+    return -1;
+}
+
+// Top-level handler. Returns:
+//   > 0 : full response written; caller should socket.write(resp[0..return])
+//     0 : incomplete request, accumulate more bytes
+//    -1 : protocol error, close connection
+int32_t handle_http(
+    const char *req, int32_t req_len,
+    char *resp, int32_t resp_cap,
+    float *query_buf
+) {
+    if (req_len < 16) return 0; // smallest valid request line is longer than this
+
+    // Find the body separator first; if not present yet, the request is
+    // incomplete (return 0 to ask for more bytes).
+    int body_start = find_body_start(req, req_len);
+    if (body_start < 0) return 0;
+
+    // Match request line.
+    if (req_len >= 4 + 7 + 1 + 8 && memcmp(req, "GET /ready ", 11) == 0) {
+        const char *src = IS_READY ? RESP_READY : RESP_NOT_READY;
+        int32_t len = IS_READY ? RESP_READY_LEN : RESP_NOT_READY_LEN;
+        if (len > resp_cap) return -1;
+        memcpy(resp, src, len);
+        return len;
+    }
+
+    if (req_len >= 4 + 13 + 1 + 8 && memcmp(req, "POST /fraud-score ", 18) == 0) {
+        if (!IS_READY) {
+            if (RESP_NOT_READY_LEN > resp_cap) return -1;
+            memcpy(resp, RESP_NOT_READY, RESP_NOT_READY_LEN);
+            return RESP_NOT_READY_LEN;
+        }
+        // Find Content-Length, ensure full body has arrived.
+        int cl = find_content_length(req, body_start);
+        if (cl < 0) return -1;
+        if (req_len < body_start + cl) return 0; // body not fully arrived
+        // Process. process_request handles parsing the JSON body itself.
+        int32_t fc = process_request(req + body_start, cl, query_buf);
+        if (fc < 0 || fc > 5) {
+            if (RESP_INVALID_LEN > resp_cap) return -1;
+            memcpy(resp, RESP_INVALID, RESP_INVALID_LEN);
+            return RESP_INVALID_LEN;
+        }
+        const http_resp_t *r = &SCORE_RESPONSES[fc];
+        if (r->len > resp_cap) return -1;
+        memcpy(resp, r->bytes, r->len);
+        return r->len;
+    }
+
+    // Unknown route.
+    if (RESP_NOT_FOUND_LEN > resp_cap) return -1;
+    memcpy(resp, RESP_NOT_FOUND, RESP_NOT_FOUND_LEN);
+    return RESP_NOT_FOUND_LEN;
+}
+
+// Forward-declare process_request which lives in this same file above.
+int32_t process_request(const char *body, int32_t body_len, float *out);

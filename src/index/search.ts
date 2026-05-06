@@ -83,7 +83,7 @@ function tryLoadNativeLib(): FfiSymbols | null {
         },
       });
       console.error(`[search] using native FFI lib: ${path}`);
-      return lib.symbols as FfiSymbols;
+      return lib.symbols as unknown as FfiSymbols;
     } catch (err) {
       console.error(`[search] FFI candidate ${path} failed: ${(err as Error).message}`);
     }
