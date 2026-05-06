@@ -8,7 +8,7 @@
 // nginx LB has the APIs gated on healthchecks, so the warming window never
 // produces user-visible 503s through `:9999`.
 
-import { handleReady, handleFraudScore, type AppState } from "./handlers.ts";
+import { handleFraudScore, type AppState } from "./handlers.ts";
 import { loadIndex } from "./index/load.ts";
 import { makeScratch, bindIndex, searchFraudCount } from "./index/search.ts";
 
@@ -20,12 +20,22 @@ const JSON_HEADERS = { "content-type": "application/json" } as const;
 
 const state: AppState = { ready: false };
 
+// Pre-built static responses; we swap /ready from "not ready" to "ready"
+// via server.reload() after the index loads + JIT warms up.
+const READY_RESPONSE = new Response("{}", {
+  status: 200,
+  headers: { "content-type": "application/json" },
+});
+const NOT_READY_RESPONSE = new Response('{"error":"not_ready"}', {
+  status: 503,
+  headers: { "content-type": "application/json" },
+});
+
 const server = Bun.serve({
   port: PORT,
   // Bun 1.3 routes table — uWebSocket-style trie + JSC structure cache.
-  // ~15% faster than the manual fetch() dispatch we had before.
   routes: {
-    "/ready": () => handleReady(state),
+    "/ready": NOT_READY_RESPONSE,
     "/fraud-score": {
       POST: (req) => handleFraudScore(req, state),
     },
@@ -57,6 +67,17 @@ loadIndex(DATA_DIR)
       searchFraudCount(idx, warmupQuery, state.scratch);
     }
 
+    server.reload({
+      routes: {
+        "/ready": READY_RESPONSE,
+        "/fraud-score": {
+          POST: (req) => handleFraudScore(req, state),
+        },
+      },
+      fetch() {
+        return new Response(NOT_FOUND_BODY, { status: 404, headers: JSON_HEADERS });
+      },
+    });
     state.ready = true;
     console.error(
       `[server] ready: n=${idx.n} k=${idx.k} d=${idx.d} nprobe=${idx.nprobe}`,
