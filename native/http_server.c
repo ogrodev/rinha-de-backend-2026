@@ -30,6 +30,12 @@ extern int32_t handle_http(
     char *resp, int32_t resp_cap,
     float *query_buf
 );
+extern int32_t handle_http_v2(
+    const char *req, int32_t req_len,
+    char *resp, int32_t resp_cap,
+    float *query_buf,
+    int32_t *consumed_out
+);
 
 #define READ_BUF_SIZE   4096
 #define WRITE_BUF_SIZE  4096
@@ -116,50 +122,16 @@ static int drain_requests(conn_t *c) {
             if (r != 0) return r;
         }
 
-        int32_t written = handle_http(
+        int32_t consumed = 0;
+        int32_t written = handle_http_v2(
             c->read_buf, c->read_len,
             c->write_buf, WRITE_BUF_SIZE,
-            c->query_buf
+            c->query_buf,
+            &consumed
         );
         if (written == 0) return 0;
         if (written < 0)  return -1;
-
-        // Find body start.
-        int body_start = -1;
-        for (int i = 0; i + 3 < c->read_len; i++) {
-            if (c->read_buf[i] == '\r' && c->read_buf[i+1] == '\n' &&
-                c->read_buf[i+2] == '\r' && c->read_buf[i+3] == '\n') {
-                body_start = i + 4;
-                break;
-            }
-        }
-        if (body_start < 0) return 0;
-
-        int consumed;
-        if (c->read_buf[0] == 'G') {
-            consumed = body_start;
-        } else {
-            int cl = -1;
-            for (int i = 0; i + 17 < body_start; i++) {
-                const char *p = c->read_buf + i;
-                if (p[0] == '\r' && p[1] == '\n' &&
-                    (memcmp(p+2, "Content-Length:", 15) == 0 ||
-                     memcmp(p+2, "content-length:", 15) == 0)) {
-                    int j = i + 17;
-                    while (j < body_start && c->read_buf[j] == ' ') j++;
-                    int v = 0;
-                    while (j < body_start && c->read_buf[j] >= '0' && c->read_buf[j] <= '9') {
-                        v = v * 10 + (c->read_buf[j] - '0');
-                        j++;
-                    }
-                    cl = v;
-                    break;
-                }
-            }
-            if (cl < 0) return -1;
-            consumed = body_start + cl;
-        }
-        if (c->read_len < consumed) return 0;
+        if (consumed <= 0) return -1;
 
         c->write_len = written;
         c->write_off = 0;

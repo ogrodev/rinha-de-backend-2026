@@ -725,15 +725,11 @@ int32_t handle_http(
     char *resp, int32_t resp_cap,
     float *query_buf
 ) {
-    if (req_len < 16) return 0; // smallest valid request line is longer than this
-
-    // Find the body separator first; if not present yet, the request is
-    // incomplete (return 0 to ask for more bytes).
+    if (req_len < 16) return 0;
     int body_start = find_body_start(req, req_len);
     if (body_start < 0) return 0;
 
-    // Match request line.
-    if (req_len >= 4 + 7 + 1 + 8 && memcmp(req, "GET /ready ", 11) == 0) {
+    if (req_len >= 11 && memcmp(req, "GET /ready ", 11) == 0) {
         const char *src = IS_READY ? RESP_READY : RESP_NOT_READY;
         int32_t len = IS_READY ? RESP_READY_LEN : RESP_NOT_READY_LEN;
         if (len > resp_cap) return -1;
@@ -741,17 +737,15 @@ int32_t handle_http(
         return len;
     }
 
-    if (req_len >= 4 + 13 + 1 + 8 && memcmp(req, "POST /fraud-score ", 18) == 0) {
+    if (req_len >= 18 && memcmp(req, "POST /fraud-score ", 18) == 0) {
         if (!IS_READY) {
             if (RESP_NOT_READY_LEN > resp_cap) return -1;
             memcpy(resp, RESP_NOT_READY, RESP_NOT_READY_LEN);
             return RESP_NOT_READY_LEN;
         }
-        // Find Content-Length, ensure full body has arrived.
         int cl = find_content_length(req, body_start);
         if (cl < 0) return -1;
-        if (req_len < body_start + cl) return 0; // body not fully arrived
-        // Process. process_request handles parsing the JSON body itself.
+        if (req_len < body_start + cl) return 0;
         int32_t fc = process_request(req + body_start, cl, query_buf);
         if (fc < 0 || fc > 5) {
             if (RESP_INVALID_LEN > resp_cap) return -1;
@@ -764,7 +758,57 @@ int32_t handle_http(
         return r->len;
     }
 
-    // Unknown route.
+    if (RESP_NOT_FOUND_LEN > resp_cap) return -1;
+    memcpy(resp, RESP_NOT_FOUND, RESP_NOT_FOUND_LEN);
+    return RESP_NOT_FOUND_LEN;
+}
+
+// Same but returns how many bytes of the request the caller should advance
+// past via *consumed_out. Avoids a second find_body_start + Content-Length
+// scan on the caller's side.
+int32_t handle_http_v2(
+    const char *req, int32_t req_len,
+    char *resp, int32_t resp_cap,
+    float *query_buf,
+    int32_t *consumed_out
+) {
+    if (req_len < 16) return 0;
+    int body_start = find_body_start(req, req_len);
+    if (body_start < 0) return 0;
+
+    if (req_len >= 11 && memcmp(req, "GET /ready ", 11) == 0) {
+        if (consumed_out) *consumed_out = body_start;
+        const char *src = IS_READY ? RESP_READY : RESP_NOT_READY;
+        int32_t len = IS_READY ? RESP_READY_LEN : RESP_NOT_READY_LEN;
+        if (len > resp_cap) return -1;
+        memcpy(resp, src, len);
+        return len;
+    }
+
+    if (req_len >= 18 && memcmp(req, "POST /fraud-score ", 18) == 0) {
+        int cl = find_content_length(req, body_start);
+        if (cl < 0) return -1;
+        if (req_len < body_start + cl) return 0;
+        if (consumed_out) *consumed_out = body_start + cl;
+
+        if (!IS_READY) {
+            if (RESP_NOT_READY_LEN > resp_cap) return -1;
+            memcpy(resp, RESP_NOT_READY, RESP_NOT_READY_LEN);
+            return RESP_NOT_READY_LEN;
+        }
+        int32_t fc = process_request(req + body_start, cl, query_buf);
+        if (fc < 0 || fc > 5) {
+            if (RESP_INVALID_LEN > resp_cap) return -1;
+            memcpy(resp, RESP_INVALID, RESP_INVALID_LEN);
+            return RESP_INVALID_LEN;
+        }
+        const http_resp_t *r = &SCORE_RESPONSES[fc];
+        if (r->len > resp_cap) return -1;
+        memcpy(resp, r->bytes, r->len);
+        return r->len;
+    }
+
+    if (consumed_out) *consumed_out = body_start;
     if (RESP_NOT_FOUND_LEN > resp_cap) return -1;
     memcpy(resp, RESP_NOT_FOUND, RESP_NOT_FOUND_LEN);
     return RESP_NOT_FOUND_LEN;
