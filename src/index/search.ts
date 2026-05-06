@@ -44,6 +44,9 @@ type FfiSymbols = {
     n: number, k: number, d: number, nprobe: number,
   ) => void;
   search_query: (query: number) => number;
+  // Single-call hot path: parses JSON body, vectorizes, searches, returns
+  // fraud_count [0..5] (or -1 on parse error).
+  process_request: (body: number, body_len: number, query_buf: number) => number;
 };
 
 function tryLoadNativeLib(): FfiSymbols | null {
@@ -72,6 +75,10 @@ function tryLoadNativeLib(): FfiSymbols | null {
         },
         search_query: {
           args: [FFIType.ptr],
+          returns: FFIType.i32,
+        },
+        process_request: {
+          args: [FFIType.ptr, FFIType.i32, FFIType.ptr],
           returns: FFIType.i32,
         },
       });
@@ -204,4 +211,15 @@ export function searchFraudCount(
   }
   // JS fallback: reuse search() but multiply back to count.
   return Math.round(searchJs(idx, query, scratch) * 5);
+}
+
+// Full request pipeline in C: parse JSON body, vectorize, search, return
+// fraud count. Returns -1 if the body is malformed (caller returns 400).
+export function processRequest(body: Uint8Array, queryBuf: Float32Array): number {
+  if (!FFI) return -2; // FFI not loaded; caller falls back to JS path
+  return FFI.process_request(ptr(body), body.length, ptr(queryBuf));
+}
+
+export function isFfiLoaded(): boolean {
+  return FFI !== null;
 }

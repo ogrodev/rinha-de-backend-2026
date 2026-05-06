@@ -30,8 +30,8 @@ TARGET := libsearch.so
 
 all: $(TARGET)
 
-$(TARGET): search.c
-	$(CC) $(CFLAGS) -o $@ search.c $(LDFLAGS)
+$(TARGET): search.c process.c
+	$(CC) $(CFLAGS) -o $@ search.c process.c $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET)
