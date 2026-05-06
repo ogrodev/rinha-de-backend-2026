@@ -350,6 +350,23 @@ async function main(): Promise<void> {
     k,
   );
 
+  // 5b) Per-cluster radius (max squared L2 from centroid to any member).
+  // Used at runtime for the triangle-inequality cluster-prune optimization.
+  const radii = new Float32Array(k);
+  for (let i = 0; i < n; i++) {
+    const c = assignments[i] as number;
+    const cBase = c * D;
+    const iBase = i * D;
+    let s = 0;
+    for (let d = 0; d < D; d++) {
+      const diff = (flat[iBase + d] as number) - (centroids[cBase + d] as number);
+      s += diff * diff;
+    }
+    if (s > (radii[c] as number)) radii[c] = s;
+  }
+  // Store sqrt(max-squared) so runtime can compare against sqrt(top5).
+  for (let c = 0; c < k; c++) radii[c] = Math.sqrt(radii[c] as number);
+
   // 6) Sampled-reference recall@5 gate.
   const recall = recallAt5(
     sortedVectors,
@@ -382,7 +399,7 @@ async function main(): Promise<void> {
     k,
     nprobeDefault: args.nprobe,
     scale: Array.from(scale),
-    schemaVersion: 2,
+    schemaVersion: 3,
   };
   await Bun.write(`${args.out}/header.json`, JSON.stringify(header));
   await Bun.write(
@@ -393,6 +410,10 @@ async function main(): Promise<void> {
   await Bun.write(
     `${args.out}/centroids.f32`,
     new Uint8Array(centroids.buffer, centroids.byteOffset, centroids.byteLength),
+  );
+  await Bun.write(
+    `${args.out}/radii.f32`,
+    new Uint8Array(radii.buffer, radii.byteOffset, radii.byteLength),
   );
   await Bun.write(
     `${args.out}/offsets.u32`,

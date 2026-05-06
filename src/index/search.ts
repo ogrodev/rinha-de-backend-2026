@@ -40,7 +40,8 @@ export function makeScratch(_k: number, nprobeMax: number): SearchScratch {
 type FfiSymbols = {
   search_init: (
     vectors: number, labels: number, centroids: number, offsets: number,
-    decodeFactor: number, n: number, k: number, d: number, nprobe: number,
+    radii: number, decodeFactor: number,
+    n: number, k: number, d: number, nprobe: number,
   ) => void;
   search_query: (query: number) => number;
 };
@@ -64,7 +65,7 @@ function tryLoadNativeLib(): FfiSymbols | null {
       const lib = dlopen(path, {
         search_init: {
           args: [
-            FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr,
+            FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr,
             FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32,
           ],
           returns: FFIType.void,
@@ -101,6 +102,7 @@ export function bindIndex(idx: Index): void {
     ptr(idx.labels),
     ptr(idx.centroids),
     ptr(idx.offsets),
+    ptr(idx.radii),
     ptr(idx.decodeFactor),
     idx.n,
     idx.k,
@@ -152,9 +154,19 @@ function searchJs(
   }
 
   topKInit(scratch.top5Dist, scratch.top5Idx);
+  const radii = idx.radii;
   for (let p = 0; p < nprobe; p++) {
     const c = scratch.topProbeIdx[p] as number;
     if (c === 0xFFFFFFFF) continue;
+    // Triangle-inequality cluster prune (mirrors native search.c).
+    const dc = scratch.topProbeDist[p] as number;
+    const rc = radii[c] as number;
+    const sqrtDc = Math.sqrt(dc);
+    if (sqrtDc > rc) {
+      const diff = sqrtDc - rc;
+      const lowerBound = diff * diff;
+      if (lowerBound >= (scratch.top5Dist[4] as number)) continue;
+    }
     const lo = offsets[c] as number;
     const hi = offsets[c + 1] as number;
     for (let i = lo; i < hi; i++) {

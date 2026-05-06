@@ -13,6 +13,8 @@ services:
     hostname: api1
     restart: unless-stopped
     networks: [rinha-net]
+    environment:
+      NPROBE: ${NPROBE:-}
     deploy:
       resources:
         limits:
@@ -28,6 +30,8 @@ services:
     hostname: api2
     restart: unless-stopped
     networks: [rinha-net]
+    environment:
+      NPROBE: ${NPROBE:-}
     deploy:
       resources:
         limits:

@@ -18,7 +18,7 @@ type Header = {
   readonly schemaVersion: number;
 };
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const D = 14;
 
 async function readJson<T>(path: string, label: string): Promise<T> {
@@ -77,22 +77,25 @@ export async function loadIndex(dir: string): Promise<Index> {
     throw new Error(`bad nprobe=${nprobe}`);
   }
 
-  // 2) Read four binaries in parallel, then validate sizes.
-  const [vBuf, lBuf, cBuf, oBuf] = await Promise.all([
+  // 2) Read five binaries in parallel, then validate sizes.
+  const [vBuf, lBuf, cBuf, oBuf, rBuf] = await Promise.all([
     readBinary(join(dir, "vectors.i16"), "vectors.i16"),
     readBinary(join(dir, "labels.bits"), "labels.bits"),
     readBinary(join(dir, "centroids.f32"), "centroids.f32"),
     readBinary(join(dir, "offsets.u32"), "offsets.u32"),
+    readBinary(join(dir, "radii.f32"), "radii.f32"),
   ]);
   expectByteLength(vBuf.byteLength, n * D * 2, "vectors.i16");
   expectByteLength(lBuf.byteLength, Math.ceil(n / 8), "labels.bits");
   expectByteLength(cBuf.byteLength, k * D * 4, "centroids.f32");
   expectByteLength(oBuf.byteLength, (k + 1) * 4, "offsets.u32");
+  expectByteLength(rBuf.byteLength, k * 4, "radii.f32");
 
   const vectors = new Int16Array(vBuf);
   const labels = new Uint8Array(lBuf);
   const centroids = new Float32Array(cBuf);
   const offsets = new Uint32Array(oBuf);
+  const radii = new Float32Array(rBuf);
 
   // 3) Build scale + decodeFactor (allocates only 2*14 floats).
   const scale = new Float32Array(D);
@@ -125,6 +128,7 @@ export async function loadIndex(dir: string): Promise<Index> {
     labels,
     centroids,
     offsets,
+    radii,
     mccRisk,
     norm,
   };

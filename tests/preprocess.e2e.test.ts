@@ -88,6 +88,7 @@ describe("preprocess CLI", () => {
       "vectors.i16",
       "labels.bits",
       "centroids.f32",
+      "radii.f32",
       "offsets.u32",
       "validation.txt",
       "mcc_risk.json",
@@ -101,7 +102,7 @@ describe("preprocess CLI", () => {
     expect(header.d).toBe(14);
     expect(header.k).toBe(64);
     expect(header.nprobeDefault).toBe(4);
-    expect(header.schemaVersion).toBe(2);
+    expect(header.schemaVersion).toBe(3);
     expect(header.scale.length).toBe(14);
 
     // Binary sizes match header.
@@ -109,6 +110,7 @@ describe("preprocess CLI", () => {
     expect(Bun.file(join(outDir, "labels.bits")).size).toBe(Math.ceil(10_000 / 8));
     expect(Bun.file(join(outDir, "centroids.f32")).size).toBe(64 * 14 * 4);
     expect(Bun.file(join(outDir, "offsets.u32")).size).toBe((64 + 1) * 4);
+    expect(Bun.file(join(outDir, "radii.f32")).size).toBe(64 * 4);
   }, 60_000);
 
   test("recall floor 1.01 trips the gate (deterministic failure)", async () => {

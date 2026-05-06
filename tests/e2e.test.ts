@@ -35,13 +35,18 @@ async function buildSyntheticIndexDir(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "rinha-e2e-"));
   await Bun.write(
     join(dir, "header.json"),
-    JSON.stringify({ n, d: 14, k: K, nprobeDefault: 4, scale: Array.from(scale), schemaVersion: 2 }),
+    JSON.stringify({ n, d: 14, k: K, nprobeDefault: 4, scale: Array.from(scale), schemaVersion: 3 }),
   );
   await Bun.write(join(dir, "vectors.i16"), sortedVectors);
   await Bun.write(join(dir, "labels.bits"), sortedLabels);
   await Bun.write(
     join(dir, "centroids.f32"),
     new Uint8Array(centroids.buffer, centroids.byteOffset, centroids.byteLength),
+  );
+  const radii = new Float32Array(K).fill(1e30);
+  await Bun.write(
+    join(dir, "radii.f32"),
+    new Uint8Array(radii.buffer, radii.byteOffset, radii.byteLength),
   );
   await Bun.write(
     join(dir, "offsets.u32"),

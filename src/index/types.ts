@@ -55,6 +55,7 @@ export type Index = {
   readonly labels: Uint8Array;
   readonly centroids: Float32Array;
   readonly offsets: Uint32Array;
+  readonly radii: Float32Array;
   readonly mccRisk: Map<string, number>;
   readonly norm: NormConsts;
 };

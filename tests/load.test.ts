@@ -37,7 +37,7 @@ async function buildSyntheticIndex(opts?: {
       k: K,
       nprobeDefault: 4,
       scale: Array.from(scale),
-      schemaVersion: opts?.badSchema ? 99 : 2,
+      schemaVersion: opts?.badSchema ? 99 : 3,
     };
     await Bun.write(join(dir, "header.json"), JSON.stringify(header));
   }
@@ -55,6 +55,11 @@ async function buildSyntheticIndex(opts?: {
   await Bun.write(
     join(dir, "offsets.u32"),
     new Uint8Array(offsets.buffer, offsets.byteOffset, offsets.byteLength),
+  );
+  const radii = new Float32Array(K).fill(1e30);
+  await Bun.write(
+    join(dir, "radii.f32"),
+    new Uint8Array(radii.buffer, radii.byteOffset, radii.byteLength),
   );
 
   await Bun.write(

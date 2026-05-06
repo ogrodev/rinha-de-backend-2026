@@ -55,7 +55,7 @@ async function buildAndLoadIndex(n: number, K: number, seed: number): Promise<In
     k: K,
     nprobeDefault: 4,
     scale: Array.from(scale),
-    schemaVersion: 2,
+    schemaVersion: 3,
   };
   await Bun.write(join(dir, "header.json"), JSON.stringify(header));
   await Bun.write(join(dir, "vectors.i16"), sortedVectors);
@@ -63,6 +63,11 @@ async function buildAndLoadIndex(n: number, K: number, seed: number): Promise<In
   await Bun.write(
     join(dir, "centroids.f32"),
     new Uint8Array(centroids.buffer, centroids.byteOffset, centroids.byteLength),
+  );
+  const radii = new Float32Array(K).fill(1e30);
+  await Bun.write(
+    join(dir, "radii.f32"),
+    new Uint8Array(radii.buffer, radii.byteOffset, radii.byteLength),
   );
   await Bun.write(
     join(dir, "offsets.u32"),

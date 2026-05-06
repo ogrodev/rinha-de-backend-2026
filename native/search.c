@@ -4,7 +4,7 @@
 // Provides two entry points:
 //
 //   void  search_init(int16_t *vectors, uint8_t *labels, float *centroids,
-//                     uint32_t *offsets, float *decode_factor,
+//                     uint32_t *offsets, float *radii, float *decode_factor,
 //                     int32_t n, int32_t k, int32_t d, int32_t nprobe);
 //
 //   int32_t search_query(const float *q);   // returns fraud count [0..5]
@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <math.h>
 
 #if defined(__aarch64__)
   #include <arm_neon.h>
@@ -33,8 +34,9 @@ typedef struct {
     float     decode_factor[16];   // padded so SIMD loads of 4 don't read past D
     int16_t  *vectors;             // n × D, row-major, cluster-sorted
     uint8_t  *labels;              // ceil(n/8), LSB-first packed
-    float    *centroids;           // k × D, row-major (the centroids file is k*D*4 bytes)
+    float    *centroids;           // k × D, row-major
     uint32_t *offsets;             // k + 1
+    float    *radii;               // k floats — sqrt(max squared L2 from centroid to any cluster member)
     int32_t   n, k, nprobe;
 } ctx_t;
 
@@ -42,7 +44,7 @@ static ctx_t G;
 
 void search_init(
     int16_t *vectors, uint8_t *labels, float *centroids,
-    uint32_t *offsets, float *decode_factor,
+    uint32_t *offsets, float *radii, float *decode_factor,
     int32_t n, int32_t k, int32_t d, int32_t nprobe
 ) {
     (void)d; // always 14
@@ -50,6 +52,7 @@ void search_init(
     G.labels = labels;
     G.centroids = centroids;
     G.offsets = offsets;
+    G.radii = radii;
     memset(G.decode_factor, 0, sizeof(G.decode_factor));
     memcpy(G.decode_factor, decode_factor, sizeof(float) * D);
     G.n = n;
@@ -217,9 +220,24 @@ int32_t search_query(const float *q) {
     }
 
     topk_init(top5_d, top5_i, 5);
+    // Cluster scan with triangle-inequality pruning.
+    //
+    // For cluster c with centroid distance d_c (squared) and radius r_c:
+    //   any vector v in cluster c has dist(q, v) >= |sqrt(d_c) - r_c|
+    // So squared L2 lower bound is `(sqrt(d_c) - r_c)^2` when sqrt(d_c) > r_c.
+    // If that lower bound > top5_d[4], no vector in c can enter the top-5 →
+    // skip the entire cluster scan.
     for (int p = 0; p < nprobe; p++) {
         int32_t c = probe_i[p];
         if (c < 0) continue;
+        const float dc = probe_d[p];                 // squared centroid distance
+        const float rc = G.radii[c];
+        const float sqrt_dc = sqrtf(dc);
+        if (sqrt_dc > rc) {
+            const float diff = sqrt_dc - rc;
+            const float lower_bound_sq = diff * diff;
+            if (lower_bound_sq >= top5_d[4]) continue;  // safe prune
+        }
         uint32_t lo = G.offsets[c];
         uint32_t hi = G.offsets[c + 1];
         for (uint32_t i = lo; i < hi; i++) {

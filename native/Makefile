@@ -7,6 +7,7 @@
 UNAME_M := $(shell uname -m)
 
 CFLAGS := -O3 -fPIC -shared -Wall -Wextra -Wno-unused-parameter
+LDFLAGS := -lm
 
 ifeq ($(UNAME_M),x86_64)
   CFLAGS += -mavx2 -mfma -msse4.1
@@ -30,7 +31,7 @@ TARGET := libsearch.so
 all: $(TARGET)
 
 $(TARGET): search.c
-	$(CC) $(CFLAGS) -o $@ search.c
+	$(CC) $(CFLAGS) -o $@ search.c $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET)
