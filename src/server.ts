@@ -10,7 +10,7 @@
 
 import { handleReady, handleFraudScore, type AppState } from "./handlers.ts";
 import { loadIndex } from "./index/load.ts";
-import { makeScratch, bindIndex } from "./index/search.ts";
+import { makeScratch, bindIndex, searchFraudCount } from "./index/search.ts";
 
 const DATA_DIR = process.env.DATA_DIR ?? "/app/data";
 const PORT = Number(process.env.PORT ?? 8080);
@@ -45,6 +45,18 @@ loadIndex(DATA_DIR)
     state.scratch = makeScratch(idx.k, idx.nprobe);
     state.queryBuf = new Float32Array(idx.d);
     bindIndex(idx);
+
+    // JIT warmup: run a few thousand searches synchronously before flipping
+    // ready, so the very first k6 ramp requests don't pay V8 compilation
+    // overhead at p99. ~150ms total.
+    const warmupQuery = new Float32Array(idx.d);
+    for (let dim = 0; dim < idx.d; dim++) {
+      warmupQuery[dim] = (idx.vectors[dim] as number) * (idx.decodeFactor[dim] as number);
+    }
+    for (let i = 0; i < 2000; i++) {
+      searchFraudCount(idx, warmupQuery, state.scratch);
+    }
+
     state.ready = true;
     console.error(
       `[server] ready: n=${idx.n} k=${idx.k} d=${idx.d} nprobe=${idx.nprobe}`,
