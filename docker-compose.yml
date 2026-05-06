@@ -1,7 +1,9 @@
-# Resource budget per spec §2.1: total ≤ 1.0 CPU + 350 MB across services.
-#   lb   = 0.10 CPU /  30 MB
-#   api1 = 0.45 CPU / 160 MB
-#   api2 = 0.45 CPU / 160 MB
+# Resource budget: total ≤ 1.0 CPU + 350 MB.
+# Distribution leaves ~5% CPU headroom (some Mac Mini CPU goes to system).
+#   lb   = 0.15 CPU /  30 MB   (nginx — handles 900 RPS, needs more than 0.10)
+#   api1 = 0.40 CPU / 160 MB
+#   api2 = 0.40 CPU / 160 MB
+# Sum: 0.95 CPU, 350 MB.
 
 services:
   api1:
@@ -12,7 +14,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
+          cpus: "0.40"
           memory: "160MB"
 
   api2:
@@ -25,7 +27,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
+          cpus: "0.40"
           memory: "160MB"
 
   lb:
@@ -45,7 +47,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.10"
+          cpus: "0.15"
           memory: "30MB"
 
 networks:
