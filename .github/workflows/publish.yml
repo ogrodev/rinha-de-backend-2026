@@ -40,7 +40,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/ogrodev/rinha-fraud:1.0.3
+            ghcr.io/ogrodev/rinha-fraud:1.0.4
             ghcr.io/ogrodev/rinha-fraud:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

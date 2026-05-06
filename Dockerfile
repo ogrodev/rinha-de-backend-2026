@@ -38,7 +38,7 @@ RUN bun scripts/preprocess.ts \
   --norm resources/normalization.json \
   --mcc resources/mcc_risk.json \
   --out /app/data \
-  --nprobe 16 \
+  --nprobe 8 \
   ${PREPROCESS_FLAGS}
 
 # --- Native SIMD search library ---------------------------------------------
