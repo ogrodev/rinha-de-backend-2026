@@ -9,3 +9,5 @@ test/test-data.json
 test/results.json
 k6-summary.json
 data-real/
+*.dylib
+*.so
