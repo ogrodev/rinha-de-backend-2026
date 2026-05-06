@@ -42,8 +42,7 @@ services:
           memory: "160MB"
 
   lb:
-    image: jrblatt/so-no-forevis:v0.0.2
-    platform: linux/amd64
+    image: so-no-forevis:local
     hostname: lb
     restart: unless-stopped
     depends_on:

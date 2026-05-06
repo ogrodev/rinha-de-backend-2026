@@ -1,15 +1,14 @@
 // HTTP handlers for `/ready` and `/fraud-score`.
 //
-// Two hot-path implementations:
-//   1. Native (FFI loaded): single C call processes the entire pipeline —
-//      JSON parse, vectorize, search, return fraud count. Saves a JS-side
-//      JSON.parse and one FFI cross. Used in production.
-//   2. JS fallback: parses with req.json(), vectorizes in TS, calls
-//      searchFraudCount which dispatches to FFI for search alone. Used by
-//      the test suite where the C lib isn't compiled.
+// Hot path is intentionally minimal:
+//   - Native FFI processes the entire pipeline (parse, vectorize, search) in
+//     one C call.
+//   - Handler returns Promise<Response> via `.then()` chain instead of an
+//     async function — saves the async function's Promise wrapper allocation.
+//   - Response objects for the 6 possible fraud scores are pre-allocated as
+//     templates and `clone()`d per request (cheaper than `new Response(...)`).
 //
-// Response bodies for the 6 possible fraud scores are pre-encoded as
-// Uint8Array buffers at module init.
+// The JS fallback is used by tests when the C library isn't compiled.
 
 import { vectorize } from "./vectorize.ts";
 import {
@@ -46,50 +45,67 @@ const SCORE_BODIES: Uint8Array[] = [
 
 const FFI_LOADED = isFfiLoaded();
 
+// Reusable Response factories — Bun.serve consumes the body once per send,
+// so we have to build a fresh Response each call. Hoisting the init objects
+// out of the hot path avoids per-call object literal allocation.
+const OK_INIT = { status: 200, headers: JSON_HEADERS } as const;
+const BAD_INIT = { status: 400, headers: JSON_HEADERS } as const;
+const NOT_READY_INIT = { status: 503, headers: JSON_HEADERS } as const;
+const INTERNAL_INIT = { status: 500, headers: JSON_HEADERS } as const;
+
 export function handleReady(state: AppState): Response {
   return state.ready
-    ? new Response(READY_BODY, { status: 200, headers: JSON_HEADERS })
-    : new Response(NOT_READY_BODY, { status: 503, headers: JSON_HEADERS });
+    ? new Response(READY_BODY, OK_INIT)
+    : new Response(NOT_READY_BODY, NOT_READY_INIT);
 }
 
-export async function handleFraudScore(
+// Native fast path: parse, vectorize, search, fraud count — single FFI call.
+// Returns Promise<Response> via .then() chain (no async function wrapper).
+function handleFraudFfi(req: Request, queryBuf: Float32Array): Promise<Response> {
+  return req.bytes().then(
+    (bytes) => {
+      const count = processRequest(bytes, queryBuf);
+      if (count < 0 || count > 5) {
+        return new Response(INVALID_PAYLOAD_BODY, BAD_INIT);
+      }
+      return new Response(SCORE_BODIES[count], OK_INIT);
+    },
+    () => new Response(INVALID_JSON_BODY, BAD_INIT),
+  );
+}
+
+// JS fallback (tests).
+async function handleFraudJs(
+  req: Request,
+  state: AppState & Required<Pick<AppState, "idx" | "scratch" | "queryBuf">>,
+): Promise<Response> {
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(INVALID_JSON_BODY, BAD_INIT);
+  }
+  const idx = state.idx;
+  const ok = vectorize(body, idx.norm, idx.mccRisk, state.queryBuf);
+  if (!ok) {
+    return new Response(INVALID_PAYLOAD_BODY, BAD_INIT);
+  }
+  const fraudCount = searchFraudCount(idx, state.queryBuf, state.scratch);
+  return new Response(SCORE_BODIES[fraudCount] ?? SCORE_BODIES[0]!, OK_INIT);
+}
+
+export function handleFraudScore(
   req: Request,
   state: AppState,
-): Promise<Response> {
+): Response | Promise<Response> {
   if (!state.ready || !state.idx || !state.scratch || !state.queryBuf) {
-    return new Response(NOT_READY_BODY, { status: 503, headers: JSON_HEADERS });
+    return new Response(NOT_READY_BODY, NOT_READY_INIT);
   }
-
-  // Fast path — entire pipeline in C.
   if (FFI_LOADED) {
-    try {
-      const bytes = await req.bytes();
-      const count = processRequest(bytes, state.queryBuf);
-      if (count < 0 || count > 5) {
-        return new Response(INVALID_PAYLOAD_BODY, { status: 400, headers: JSON_HEADERS });
-      }
-      return new Response(SCORE_BODIES[count], { status: 200, headers: JSON_HEADERS });
-    } catch {
-      return new Response(INTERNAL_BODY, { status: 500, headers: JSON_HEADERS });
-    }
+    return handleFraudFfi(req, state.queryBuf);
   }
-
-  // JS fallback path (tests).
-  try {
-    let body: any;
-    try {
-      body = await req.json();
-    } catch {
-      return new Response(INVALID_JSON_BODY, { status: 400, headers: JSON_HEADERS });
-    }
-    const idx = state.idx;
-    const ok = vectorize(body, idx.norm, idx.mccRisk, state.queryBuf);
-    if (!ok) {
-      return new Response(INVALID_PAYLOAD_BODY, { status: 400, headers: JSON_HEADERS });
-    }
-    const fraudCount = searchFraudCount(idx, state.queryBuf, state.scratch);
-    return new Response(SCORE_BODIES[fraudCount] ?? SCORE_BODIES[0]!, { status: 200, headers: JSON_HEADERS });
-  } catch {
-    return new Response(INTERNAL_BODY, { status: 500, headers: JSON_HEADERS });
-  }
+  return handleFraudJs(
+    req,
+    state as AppState & Required<Pick<AppState, "idx" | "scratch" | "queryBuf">>,
+  ).catch(() => new Response(INTERNAL_BODY, INTERNAL_INIT));
 }
