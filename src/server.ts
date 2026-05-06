@@ -53,7 +53,7 @@ loadIndex(DATA_DIR)
     for (let dim = 0; dim < idx.d; dim++) {
       warmupQuery[dim] = (idx.vectors[dim] as number) * (idx.decodeFactor[dim] as number);
     }
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 50_000; i++) {
       searchFraudCount(idx, warmupQuery, state.scratch);
     }
 

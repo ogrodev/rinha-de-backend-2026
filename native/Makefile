@@ -10,10 +10,10 @@ CFLAGS := -O3 -fPIC -shared -Wall -Wextra -Wno-unused-parameter
 LDFLAGS := -lm
 
 ifeq ($(UNAME_M),x86_64)
-  CFLAGS += -mavx2 -mfma -msse4.1
+  CFLAGS += -march=haswell -mavx2 -mfma -msse4.1
 endif
 ifeq ($(UNAME_M),amd64)
-  CFLAGS += -mavx2 -mfma -msse4.1
+  CFLAGS += -march=haswell -mavx2 -mfma -msse4.1
 endif
 ifeq ($(UNAME_M),aarch64)
   # NEON is mandatory on AArch64.
