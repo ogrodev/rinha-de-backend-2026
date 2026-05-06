@@ -97,28 +97,59 @@ static inline int read_string(cur_t *c, const char **out, int *len) {
 
 // Read a JSON number (integer or float, optionally negative). Returns 0 and
 // writes value to *out on success.
+// Fast JSON number parser. Replaces strtod (locale-aware, slow). Handles
+// integers, decimals, optional sign, optional exponent. Bounded — caller
+// guarantees the slice doesn't overrun `c->end`. Sufficient for the contest's
+// payload values which are simple decimal numbers.
 static inline int read_number(cur_t *c, double *out) {
     skip_ws(c);
-    const char *start = c->p;
-    if (c->p < c->end && (*c->p == '-' || *c->p == '+')) c->p++;
-    while (c->p < c->end) {
-        char ch = *c->p;
-        if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'e' || ch == 'E' || ch == '+' || ch == '-') {
-            c->p++;
-        } else break;
+    if (c->p >= c->end) return -1;
+    int neg = 0;
+    if (*c->p == '-') { neg = 1; c->p++; }
+    else if (*c->p == '+') { c->p++; }
+    if (c->p >= c->end) return -1;
+
+    int64_t int_part = 0;
+    int has_digit = 0;
+    while (c->p < c->end && *c->p >= '0' && *c->p <= '9') {
+        int_part = int_part * 10 + (*c->p - '0');
+        c->p++;
+        has_digit = 1;
     }
-    if (c->p == start) return -1;
-    // Parse in place — strtod doesn't need null terminator if we restrict the slice via ptr math,
-    // but it does. Copy into stack buffer for safety.
-    char buf[64];
-    int n = (int)(c->p - start);
-    if (n >= (int)sizeof(buf)) return -1;
-    memcpy(buf, start, n);
-    buf[n] = 0;
-    char *eptr;
-    double v = strtod(buf, &eptr);
-    if (eptr == buf) return -1;
-    *out = v;
+
+    double v = (double)int_part;
+    if (c->p < c->end && *c->p == '.') {
+        c->p++;
+        double frac = 0;
+        double scale = 0.1;
+        while (c->p < c->end && *c->p >= '0' && *c->p <= '9') {
+            frac += (*c->p - '0') * scale;
+            scale *= 0.1;
+            c->p++;
+            has_digit = 1;
+        }
+        v += frac;
+    }
+
+    if (c->p < c->end && (*c->p == 'e' || *c->p == 'E')) {
+        c->p++;
+        int eneg = 0;
+        if (c->p < c->end && (*c->p == '-' || *c->p == '+')) {
+            if (*c->p == '-') eneg = 1;
+            c->p++;
+        }
+        int exp = 0;
+        while (c->p < c->end && *c->p >= '0' && *c->p <= '9') {
+            exp = exp * 10 + (*c->p - '0');
+            c->p++;
+        }
+        double mul = 1.0;
+        for (int i = 0; i < exp; i++) mul *= 10.0;
+        v = eneg ? v / mul : v * mul;
+    }
+
+    if (!has_digit) return -1;
+    *out = neg ? -v : v;
     return 0;
 }
 

@@ -52,6 +52,23 @@ async function main(): Promise<void> {
     warmupQuery[dim] =
       (idx.vectors[dim] as number) * (idx.decodeFactor[dim] as number);
   }
+  // Pre-warm pages: touch every 4KB of the big int16 vectors array so the
+  // first request doesn't pay for demand page-faults (~100µs each on the
+  // rig). The 84 MB array has ~21k pages; a single linear pass dirties them
+  // all into resident memory.
+  let touchSum = 0;
+  const stride = 4096 / 2; // int16 elements per page
+  for (let i = 0; i < idx.vectors.length; i += stride) {
+    touchSum += (idx.vectors[i] as number);
+  }
+  // Same for centroids (much smaller but still helps).
+  for (let i = 0; i < idx.centroids.length; i += 1024) {
+    touchSum += (idx.centroids[i] as number);
+  }
+  // Force the optimizer to keep the touch (otherwise dead-code elimination
+  // could skip the loop entirely).
+  if (touchSum === Number.NaN) console.error("unreachable");
+
   for (let i = 0; i < 50_000; i++) {
     searchFraudCount(idx, warmupQuery, state.scratch);
   }
