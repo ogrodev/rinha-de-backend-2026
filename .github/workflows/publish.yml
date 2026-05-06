@@ -1,0 +1,46 @@
+name: publish-image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download contest reference data
+        run: |
+          mkdir -p resources
+          curl -sL -o resources/references.json.gz https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/references.json.gz
+          curl -sL -o resources/mcc_risk.json https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/mcc_risk.json
+          curl -sL -o resources/normalization.json https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/normalization.json
+          ls -la resources/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push amd64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/ogrodev/rinha-fraud:1.0.0
+            ghcr.io/ogrodev/rinha-fraud:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
