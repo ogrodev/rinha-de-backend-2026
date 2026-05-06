@@ -44,9 +44,14 @@ type FfiSymbols = {
     n: number, k: number, d: number, nprobe: number,
   ) => void;
   search_query: (query: number) => number;
-  // Single-call hot path: parses JSON body, vectorizes, searches, returns
-  // fraud_count [0..5] (or -1 on parse error).
   process_request: (body: number, body_len: number, query_buf: number) => number;
+  // Native HTTP server entry. Starts an epoll-based server on the given UDS
+  // path, spawns its own thread, and returns. Bun's main thread is then idle;
+  // the C thread handles all incoming HTTP requests directly.
+  start_http_server: (sock_path: number) => number;
+  // Toggle the "ready" flag inside the C library (used by /ready and to gate
+  // /fraud-score). Set to 1 after JIT warmup completes.
+  set_ready: (ready: number) => void;
 };
 
 function tryLoadNativeLib(): FfiSymbols | null {
@@ -80,6 +85,14 @@ function tryLoadNativeLib(): FfiSymbols | null {
         process_request: {
           args: [FFIType.ptr, FFIType.i32, FFIType.ptr],
           returns: FFIType.i32,
+        },
+        start_http_server: {
+          args: [FFIType.cstring],
+          returns: FFIType.i32,
+        },
+        set_ready: {
+          args: [FFIType.i32],
+          returns: FFIType.void,
         },
       });
       console.error(`[search] using native FFI lib: ${path}`);
@@ -222,4 +235,20 @@ export function processRequest(body: Uint8Array, queryBuf: Float32Array): number
 
 export function isFfiLoaded(): boolean {
   return FFI !== null;
+}
+
+// Native HTTP server entry. Bun's role becomes: load the index, call
+// bindIndex(), then call startHttpServer(SOCK). The C thread takes over
+// from there. Returns true if the server was successfully started.
+export function startHttpServer(sockPath: string): boolean {
+  if (!FFI) return false;
+  // Encode path as null-terminated buffer for cstring arg.
+  const bytes = new TextEncoder().encode(sockPath + "\0");
+  const r = FFI.start_http_server(ptr(bytes));
+  return r === 0;
+}
+
+export function setReady(ready: boolean): void {
+  if (!FFI) return;
+  FFI.set_ready(ready ? 1 : 0);
 }

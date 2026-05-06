@@ -7,7 +7,7 @@
 UNAME_M := $(shell uname -m)
 
 CFLAGS := -O3 -fPIC -shared -Wall -Wextra -Wno-unused-parameter
-LDFLAGS := -lm
+LDFLAGS := -lm -lpthread
 
 ifeq ($(UNAME_M),x86_64)
   CFLAGS += -march=haswell -mavx2 -mfma -msse4.1
@@ -30,8 +30,8 @@ TARGET := libsearch.so
 
 all: $(TARGET)
 
-$(TARGET): search.c process.c
-	$(CC) $(CFLAGS) -o $@ search.c process.c $(LDFLAGS)
+$(TARGET): search.c process.c http_server.c
+	$(CC) $(CFLAGS) -o $@ search.c process.c http_server.c $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET)
