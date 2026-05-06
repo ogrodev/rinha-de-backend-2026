@@ -55,7 +55,7 @@ FROM oven/bun:1-slim AS runtime
 WORKDIR /app
 
 ENV DATA_DIR=/app/data \
-    PORT=8080 \
+    SOCK=/run/sock/api.sock \
     NODE_ENV=production
 
 # `src/` is a runtime-only dependency now; copy directly from the build
@@ -68,11 +68,10 @@ COPY --from=builder /app/data ./data
 COPY --from=builder /app/package.json /app/bunfig.toml ./
 COPY --from=builder /app/node_modules ./node_modules
 
-EXPOSE 8080
-
-# bun:1-slim has no curl/wget, so probe via Bun itself. /ready returns
-# 503 while the index loads; --start-period gives that warming window.
-HEALTHCHECK --interval=1s --timeout=2s --start-period=60s --retries=3 \
-  CMD bun -e "fetch('http://127.0.0.1:8080/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+# bun:1-slim has no curl/wget, so probe via Bun itself over the Unix socket.
+# /ready returns 503 while the index loads; --start-period gives that
+# warming window time to complete before the LB is allowed to start.
+HEALTHCHECK --interval=1s --timeout=2s --start-period=120s --retries=3 \
+  CMD bun -e "fetch('http://localhost/ready', { unix: process.env.SOCK }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["bun", "src/server.ts"]
