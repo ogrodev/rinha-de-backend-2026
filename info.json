@@ -1,0 +1,7 @@
+{
+  "participants": ["ogrodev"],
+  "social": ["https://github.com/ogrodev"],
+  "source-code-repo": "https://github.com/ogrodev/rinha-de-backend-2026",
+  "stack": ["bun", "typescript", "c-simd-ffi", "nginx"],
+  "open_to_work": false
+}

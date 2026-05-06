@@ -1,0 +1,11 @@
+node_modules
+data/*
+!data/.gitkeep
+.DS_Store
+*.log
+resources/
+.omp/
+test/test-data.json
+test/results.json
+k6-summary.json
+data-real/

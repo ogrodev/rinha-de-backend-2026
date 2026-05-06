@@ -1,0 +1,16 @@
+{
+  "name": "rinha-fraud",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "test:e2e": "bun test tests/e2e.test.ts",
+    "dev": "bun src/server.ts",
+    "preprocess": "bun scripts/preprocess.ts",
+    "bench": "bun bench/profile.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
