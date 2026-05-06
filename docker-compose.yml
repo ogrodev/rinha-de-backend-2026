@@ -1,8 +1,10 @@
-# Resource budget per spec §2.1: total ≤ 1.0 CPU + 350 MB.
-#   lb   = 0.10 CPU /  30 MB
+# Resource budget: total ≤ 1.0 CPU + 350 MB.
+# Empirically on the Mac Mini rig: lb=0.10 hits CPU starvation under 900 RPS,
+# pushing p99 above 100ms. lb=0.15 unblocks nginx; total stays under cap.
+#   lb   = 0.15 CPU /  30 MB
 #   api1 = 0.40 CPU / 160 MB
 #   api2 = 0.40 CPU / 160 MB
-# Sum: 0.90 CPU, 350 MB.
+# Sum: 0.95 CPU, 350 MB.
 
 services:
   api1:
@@ -46,7 +48,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.10"
+          cpus: "0.15"
           memory: "30MB"
 
 networks:
