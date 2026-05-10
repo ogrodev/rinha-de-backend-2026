@@ -6,8 +6,8 @@
 
 UNAME_M := $(shell uname -m)
 
-CFLAGS := -O3 -fPIC -shared -Wall -Wextra -Wno-unused-parameter
-LDFLAGS := -lm -lpthread
+CFLAGS := -O3 -fPIC -shared -Wall -Wextra -Wno-unused-parameter -flto -fomit-frame-pointer -funroll-loops
+LDFLAGS := -lm -lpthread -flto
 
 ifeq ($(UNAME_M),x86_64)
   CFLAGS += -march=haswell -mavx2 -mfma -msse4.1

@@ -56,30 +56,57 @@ typedef struct {
     int                epoll_fd;
     pthread_t          thread;
 } srv_t;
-
 static srv_t G_SRV;
 
-// --- Per-connection lifecycle -----------------------------------------------
+// --- Connection pool --------------------------------------------------------
+//
+// Pre-allocate up to MAX_POOL conn_t structs (with their buffers) at start.
+// acquire/release use a simple stack of free indices. Eliminates malloc/free
+// from the per-request hot path; under contest load (~250 max VUs) we
+// rarely exceed 256 simultaneous connections.
 
-static conn_t *conn_new(int fd) {
-    conn_t *c = (conn_t *)malloc(sizeof(conn_t));
-    if (!c) return NULL;
+#define MAX_POOL 512
+
+static conn_t G_POOL[MAX_POOL];
+static int    G_FREE[MAX_POOL];
+static int    G_FREE_TOP = 0;
+static int    G_POOL_INIT = 0;
+
+static void pool_init(void) {
+    for (int i = 0; i < MAX_POOL; i++) {
+        G_POOL[i].fd = -1;
+        G_POOL[i].read_buf = (char *)malloc(READ_BUF_SIZE);
+        G_POOL[i].write_buf = (char *)malloc(WRITE_BUF_SIZE);
+        G_POOL[i].query_buf = (float *)aligned_alloc(64, sizeof(float) * 16);
+        memset(G_POOL[i].query_buf, 0, sizeof(float) * 16);
+        G_FREE[i] = i;
+    }
+    G_FREE_TOP = MAX_POOL;
+    G_POOL_INIT = 1;
+}
+
+static conn_t *pool_acquire(int fd) {
+    if (G_FREE_TOP == 0) return NULL;
+    int idx = G_FREE[--G_FREE_TOP];
+    conn_t *c = &G_POOL[idx];
     c->fd = fd;
     c->read_len = 0;
     c->write_len = 0;
     c->write_off = 0;
-    c->read_buf = (char *)malloc(READ_BUF_SIZE);
-    c->write_buf = (char *)malloc(WRITE_BUF_SIZE);
-    c->query_buf = (float *)aligned_alloc(64, sizeof(float) * 16);
-    if (!c->read_buf || !c->write_buf || !c->query_buf) {
-        free(c->read_buf);
-        free(c->write_buf);
-        free(c->query_buf);
-        free(c);
-        return NULL;
-    }
-    memset(c->query_buf, 0, sizeof(float) * 16);
     return c;
+}
+
+static void pool_release(conn_t *c) {
+    int idx = (int)(c - G_POOL);
+    if (idx < 0 || idx >= MAX_POOL) return;
+    c->fd = -1;
+    G_FREE[G_FREE_TOP++] = idx;
+}
+
+// --- Per-connection lifecycle -----------------------------------------------
+
+static conn_t *conn_new(int fd) {
+    return pool_acquire(fd);
 }
 
 static void conn_close(conn_t *c) {
@@ -88,10 +115,7 @@ static void conn_close(conn_t *c) {
         epoll_ctl(G_SRV.epoll_fd, EPOLL_CTL_DEL, c->fd, NULL);
         close(c->fd);
     }
-    free(c->read_buf);
-    free(c->write_buf);
-    free(c->query_buf);
-    free(c);
+    pool_release(c);
 }
 
 // --- I/O helpers ------------------------------------------------------------
@@ -176,6 +200,7 @@ static void *server_thread(void *arg) {
     (void)arg;
     struct epoll_event ev;
     struct epoll_event events[EPOLL_BATCH];
+
 
     ev.events = EPOLLIN;
     ev.data.ptr = NULL; // listener: special-cased by ptr==NULL
@@ -270,6 +295,7 @@ static void *server_thread(void *arg) {
 
 static int setup_listener(const char *sock_path) {
     memset(&G_SRV, 0, sizeof(G_SRV));
+    if (!G_POOL_INIT) pool_init();
 
     unlink(sock_path);
 
