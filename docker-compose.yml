@@ -8,7 +8,7 @@
 
 services:
   api1:
-    image: ghcr.io/ogrodev/rinha-fraud:1.0.4
+    image: ghcr.io/ogrodev/rinha-fraud:1.0.5
     hostname: api1
     restart: unless-stopped
     environment:
@@ -23,7 +23,7 @@ services:
           memory: "160MB"
 
   api2:
-    image: ghcr.io/ogrodev/rinha-fraud:1.0.4
+    image: ghcr.io/ogrodev/rinha-fraud:1.0.5
     depends_on:
       - api1
     hostname: api2
